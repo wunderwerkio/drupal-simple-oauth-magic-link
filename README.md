@@ -1,5 +1,7 @@
 # Simple OAuth Magic Link
 
+**This module is not actively developed!**
+
 This module provides the ability to use so called "Magic Links" to log a user in without the need for a password.
 The main motivation behind this module is for decoupled installations to use one time login urls via OAuth2.
 
