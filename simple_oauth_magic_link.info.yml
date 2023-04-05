@@ -1,0 +1,8 @@
+name: Simple Auth Magic Link
+type: module
+description: Provides the ability to generate a magic link for login via an authorization code. This module also aims to change the core password reset and account cancel links to use a magic link.
+core_version_requirement: ^9 || ^10
+package: Authentication
+dependencies:
+  - drupal:user
+  - simple_oauth

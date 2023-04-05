@@ -1,0 +1,20 @@
+{
+    "name": "drupal/simple_oauth_magic_link",
+    "description": "Provides the ability to generate a magic link for login via an authorization code. This module also aims to change the core password reset and account cancel links to use a magic link.",
+    "type": "drupal-module",
+    "require": {
+        "drupal/simple_oauth": "^6",
+        "php": ">=8.0"
+    },
+    "require-dev": {
+      "phpspec/prophecy-phpunit": "^2"
+    },
+    "license": "GPL-2.0-or-later",
+    "extra": {
+        "drush": {
+            "services": {
+                "drush.services.yml": "^9 || ^10"
+            }
+        }
+    }
+}

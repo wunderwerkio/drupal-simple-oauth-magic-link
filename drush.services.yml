@@ -1,0 +1,7 @@
+services:
+  Drupal\simple_oauth_magic_link\Commands\MagicLinkCommands:
+    arguments:
+      - '@simple_oauth_magic_link.service.auth_code_generator'
+      - '@simple_oauth_magic_link.service.magic_link_generator'
+    tags:
+      - { name: drush.command }

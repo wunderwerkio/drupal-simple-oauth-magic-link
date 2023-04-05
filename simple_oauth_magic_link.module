@@ -1,0 +1,266 @@
+<?php
+
+/**
+ * @file
+ * Contains simple_oauth_magic_link.module.
+ */
+
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Field\BaseFieldDefinition;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+
+/**
+ * Implements hook_entity_base_field_info().
+ */
+function simple_oauth_magic_link_entity_base_field_info(EntityTypeInterface $entity_type) {
+  $fields = [];
+
+  if ($entity_type->id() == 'consumer') {
+    $fields['magic_link_one_time_login_urls_enabled'] = BaseFieldDefinition::create('boolean')
+      ->setLabel(new TranslatableMarkup('Use Magic Links for One-Time Login URLs'))
+      ->setDescription(new TranslatableMarkup('A boolean indicating whether or not to use Magic Links for One-Time Login URLs in account emails.'))
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'type' => 'boolean',
+        'weight' => 4,
+      ])
+      ->setDisplayOptions('form', [
+        'weight' => 4,
+      ])
+      ->setRevisionable(TRUE)
+      ->setTranslatable(FALSE)
+      ->setDefaultValue(TRUE);
+
+    $fields['magic_link_auth_code_expiration'] = BaseFieldDefinition::create('integer')
+      ->setLabel(new TranslatableMarkup('Magic Link authorization code expiration time'))
+      ->setDescription(new TranslatableMarkup('The number of seconds that the authorization code (when used for magic link) will be valid.'))
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'weight' => 6,
+      ])
+      ->setDisplayOptions('form', [
+        'weight' => 6,
+      ])
+      ->setRevisionable(TRUE)
+      ->setTranslatable(FALSE)
+      ->setRequired(TRUE)
+      ->setSetting('unsigned', TRUE)
+      ->setDefaultValue(1800);
+
+    $fields['magic_link_base_url'] = BaseFieldDefinition::create('string')
+      ->setLabel(new TranslatableMarkup('Base-URL for Magic Links'))
+      ->setDescription(new TranslatableMarkup('The Base-URL should contain the protocol and domain, e.g. https://example.com.'))
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'weight' => 5,
+      ])
+      ->setDisplayOptions('form', [
+        'weight' => 5,
+      ])
+      ->setDisplayConfigurable('view', TRUE)
+      ->setTranslatable(TRUE)
+      // URIs are not length limited by RFC 2616, but we can only store 255
+      // characters in our entity DB schema.
+      ->setSetting('max_length', 255);
+
+    $fields['magic_link_path_template'] = BaseFieldDefinition::create('string')
+      ->setLabel(new TranslatableMarkup('Path template for Magic Links'))
+      ->setDescription(new TranslatableMarkup('This template is used to construct the path for the magic link and is appended to the Base-URL. The sequence {code} will be replaced with the authorization code.'))
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'weight' => 5,
+      ])
+      ->setDisplayOptions('form', [
+        'weight' => 5,
+      ])
+      ->setDisplayConfigurable('view', TRUE)
+      ->setTranslatable(TRUE)
+      // URIs are not length limited by RFC 2616, but we can only store 255
+      // characters in our entity DB schema.
+      ->setSetting('max_length', 255);
+  }
+
+  return $fields;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function simple_oauth_magic_link_form_consumer_form_alter(array &$form, FormStateInterface $form_state, $form_id) {
+  $stateVisibleIfAuthorizationCodeGrantEnabled = [
+    '#states' => [
+      'visible' => [
+        ':input[name="grant_types[authorization_code]"]' => [
+          'checked' => TRUE,
+        ],
+      ],
+    ],
+  ];
+
+  $form['magic_link_settings_info'] = [
+    '#type' => 'details',
+    '#title' => new TranslatableMarkup('Magic Link Settings'),
+    '#open' => TRUE,
+    '#weight' => 3,
+    'info' => [
+      '#type' => 'html_tag',
+      '#tag' => 'div',
+      '#value' => new TranslatableMarkup('The <strong>Authorization Code</strong> grant MUST be enabled for magic links to work!'),
+      '#attributes' => [
+        'class' => ['messages', 'messages--warning'],
+      ],
+    ],
+    '#states' => [
+      'visible' => [
+        ':input[name="grant_types[authorization_code]"]' => [
+          'checked' => FALSE,
+        ],
+      ],
+    ],
+  ];
+
+  $form['magic_link_settings'] = [
+    '#type' => 'details',
+    '#title' => new TranslatableMarkup('Magic Link Settings'),
+    '#open' => TRUE,
+    '#weight' => 3,
+    '#states' => [
+      'visible' => [
+        ':input[name="grant_types[authorization_code]"]' => [
+          'checked' => TRUE,
+        ],
+      ],
+    ],
+    'magic_link_one_time_login_urls_enabled' => array_merge(
+      $form['magic_link_one_time_login_urls_enabled'],
+      $stateVisibleIfAuthorizationCodeGrantEnabled,
+    ),
+    'magic_link_auth_code_expiration' => array_merge(
+      $form['magic_link_auth_code_expiration'],
+      $stateVisibleIfAuthorizationCodeGrantEnabled,
+    ),
+    'magic_link_base_url' => array_merge(
+      $form['magic_link_base_url'],
+      $stateVisibleIfAuthorizationCodeGrantEnabled,
+    ),
+    'magic_link_path_template' => array_merge(
+      $form['magic_link_path_template'],
+      $stateVisibleIfAuthorizationCodeGrantEnabled,
+    ),
+  ];
+
+  unset($form['magic_link_one_time_login_urls_enabled']);
+  unset($form['magic_link_auth_code_expiration']);
+  unset($form['magic_link_base_url']);
+  unset($form['magic_link_path_template']);
+
+  $form['#validate'][] = '_simple_oauth_magic_link_consumer_entity_form_validate';
+}
+
+/**
+ * Form validation handler for the consumer entity form.
+ */
+function _simple_oauth_magic_link_consumer_entity_form_validate(array &$form, FormStateInterface $form_state) {
+  $authorizationCodeGrantEnabled = array_reduce($form_state->getValue('grant_types'), function($carry, $item) {
+    if ($item['value'] === 'authorization_code') {
+      return TRUE;
+    }
+
+    return $carry;
+  }, FALSE);
+
+  // Only validate magic link fields if the authorization code grant is enabled.
+  if (!$authorizationCodeGrantEnabled) {
+    return;
+  }
+
+  if (empty($form_state->getValue('magic_link_base_url')[0]['value'])) {
+    $form_state->setErrorByName('magic_link_base_url', new TranslatableMarkup('The <strong>Base-URL</strong> is required!'));
+  }
+
+  $pathTemplate = $form_state->getValue('magic_link_path_template')[0]['value'];
+  if (empty($pathTemplate)) {
+    $form_state->setErrorByName('magic_link_path_template', new TranslatableMarkup('The <strong>Path template</strong> is required!'));
+  } else if (strpos($pathTemplate, '{code}') === FALSE) {
+    $form_state->setErrorByName('magic_link_path_template', new TranslatableMarkup('The <strong>Path template</strong> must contain the placeholder <strong>{code}</strong>!'));
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function simple_oauth_magic_link_mail_alter(&$message) {
+  if (strpos($message['id'], 'user_') === 0) {
+    _simple_oauth_magic_link_replace_mail_tokens($message);
+  }
+}
+
+/**
+ * Replace custom tokens in mail message.
+ *
+ * This function can be used by other modules.
+ */
+function _simple_oauth_magic_link_replace_mail_tokens(&$message) {
+  $variables = ['user' => $message['params']['account']];
+
+  // @see user_mail().
+  $languageManager = \Drupal::languageManager();
+  $langcode = $message['langcode'];
+  $language = $languageManager->getLanguage($langcode);
+  $originalLanguage = $languageManager->getConfigOverrideLanguage();
+  $languageManager->setConfigOverrideLanguage($language);
+  $tokenOptions = [
+    'langcode' => $langcode,
+    'key' => $message['key'],
+    'clear' => TRUE,
+    'callback' => 'simple_oauth_magic_link_user_mail_tokens',
+  ];
+
+  // Replace tokens in the message body.
+  foreach($message['body'] as $key => $bodyStr) {
+    $message['body'][$key] = \Drupal::token()->replace($bodyStr, $variables, $tokenOptions);
+  }
+
+  $languageManager->setConfigOverrideLanguage($originalLanguage);
+}
+
+/**
+ * Custon token callback for user mail tokens.
+ */
+function simple_oauth_magic_link_user_mail_tokens(&$replacements, $data, $options) {
+  if (isset($data['user'])) {
+    $generator = \Drupal::service('simple_oauth_magic_link.service.magic_link_generator');
+
+    $defaultParams = [
+      'langcode' => $options['langcode'],
+      'key' => $options['key'],
+    ];
+
+    $tokens = [
+      'magic-link-login_mail-only' => $defaultParams,
+    ];
+
+    // Add password-reset token for related emails.
+    if (str_starts_with($options['key'], 'register_') || $options['key'] === 'password_reset') {
+      $timestamp = \Drupal::time()->getRequestTime();
+      $hash = user_pass_rehash($data['user'], $timestamp);
+
+      $tokens['magic-link-password-reset_mail-only'] = array_merge(
+        $defaultParams,
+        [
+          'timestamp' => $timestamp,
+          'hash' => $hash,
+        ],
+      );
+    }
+
+    // Allow modules to register more tokens.
+    \Drupal::moduleHandler()->alter('simple_oauth_magic_link_user_mail_tokens', $tokens, $data['user'], $defaultParams);
+
+    // Register token replacements.
+    foreach ($tokens as $tokenName => $params) {
+      $replacements['[user:'. $tokenName . ']'] = $generator->generateUrl($data['user'], $params);
+    }
+  }
+}
